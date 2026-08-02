@@ -76,7 +76,7 @@ a {
 }
 
 .galaxy-layer {
-  z-index: -3;
+  z-index: 0;
   overflow: hidden;
   background: #080611;
 }
@@ -110,13 +110,13 @@ a {
 }
 
 .cosmic-veil {
-  z-index: -2;
+  z-index: 1;
   pointer-events: none;
   background:
-    radial-gradient(circle at 22% 28%, rgba(155, 84, 214, 0.14), transparent 30%),
-    radial-gradient(circle at 78% 62%, rgba(255, 80, 154, 0.11), transparent 28%),
-    linear-gradient(180deg, rgba(8, 6, 17, 0.08), rgba(8, 6, 17, 0.46));
-  animation: cosmic-breathe 9s ease-in-out infinite alternate;
+    radial-gradient(circle at 18% 24%, rgba(155, 84, 214, 0.08), transparent 30%),
+    radial-gradient(circle at 82% 68%, rgba(255, 80, 154, 0.07), transparent 30%),
+    linear-gradient(180deg, rgba(3, 2, 10, 0.02), rgba(3, 2, 10, 0.24));
+  animation: cosmic-breathe 12s ease-in-out infinite alternate;
 }
 
 .cosmic-veil::before,
@@ -127,21 +127,16 @@ a {
 }
 
 .cosmic-veil::before {
-  opacity: 0.3;
-  background-image:
-    radial-gradient(circle at 20% 18%, #fff 0 0.7px, transparent 1px),
-    radial-gradient(circle at 72% 36%, rgba(255, 213, 229, 0.9) 0 0.6px, transparent 1px),
-    radial-gradient(circle at 44% 78%, rgba(209, 186, 255, 0.85) 0 0.8px, transparent 1.2px);
-  background-size: 113px 127px, 157px 181px, 211px 193px;
+  display: none;
 }
 
 .cosmic-veil::after {
   background: linear-gradient(
     90deg,
-    rgba(8, 6, 17, 0.2),
-    transparent 28%,
-    transparent 72%,
-    rgba(8, 6, 17, 0.22)
+    rgba(3, 2, 10, 0.28),
+    transparent 18%,
+    transparent 82%,
+    rgba(3, 2, 10, 0.3)
   );
 }
 
@@ -222,7 +217,7 @@ a {
 
 .story-section {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   display: flex;
   width: 100%;
   min-height: 100svh;
@@ -243,12 +238,12 @@ a {
   content: "";
   pointer-events: none;
   background:
-    linear-gradient(90deg, rgba(8, 6, 17, 0.76) 0%, rgba(8, 6, 17, 0.12) 62%),
-    linear-gradient(0deg, rgba(8, 6, 17, 0.56), transparent 48%);
+    linear-gradient(90deg, rgba(3, 2, 10, 0.68) 0%, rgba(3, 2, 10, 0.08) 54%, transparent 72%),
+    linear-gradient(0deg, rgba(3, 2, 10, 0.44), transparent 46%);
 }
 
 .hero-copy {
-  width: min(100%, 980px);
+  width: min(100%, 700px);
 }
 
 .date-pill,
@@ -277,11 +272,42 @@ a {
   filter: drop-shadow(0 0 8px rgba(255, 216, 154, 0.8));
 }
 
+.experience-label {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 0 0 1.15rem;
+  color: rgba(255, 250, 247, 0.66);
+  font-size: 0.62rem;
+  font-weight: 750;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.experience-label i {
+  position: relative;
+  display: block;
+  width: 8px;
+  height: 8px;
+  border: 1px solid rgba(255, 216, 154, 0.85);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 5px rgba(255, 216, 154, 0.06),
+    0 0 16px rgba(255, 141, 183, 0.65);
+}
+
+.experience-label small {
+  padding-left: 0.75rem;
+  border-left: 1px solid rgba(255, 255, 255, 0.16);
+  color: rgba(255, 250, 247, 0.4);
+  font: inherit;
+}
+
 .hero-copy h1 {
-  max-width: 11.6ch;
+  max-width: 10.4ch;
   margin: 0;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(3.4rem, 8.6vw, 8.7rem);
+  font-size: clamp(3.5rem, 6.4vw, 7.15rem);
   font-weight: 400;
   letter-spacing: -0.064em;
   line-height: 0.91;
@@ -440,12 +466,16 @@ a {
 .memory-section {
   min-height: 125svh;
   display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(390px, 1.1fr);
-  gap: clamp(2.5rem, 8vw, 9rem);
+  grid-template-columns: minmax(320px, 530px) minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-content: center;
+  gap: 1.6rem clamp(3rem, 8vw, 9rem);
 }
 
 .memory-copy {
   width: min(100%, 590px);
+  grid-column: 1;
+  grid-row: 1;
 }
 
 .touch-instruction {
@@ -464,11 +494,22 @@ a {
   background: currentColor;
 }
 
+.three-hint {
+  max-width: 25rem;
+  margin: 0.7rem 0 0;
+  color: rgba(255, 250, 247, 0.46);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
 .memory-orbit {
   position: relative;
-  width: min(42vw, 600px);
+  width: min(30vw, 350px);
   aspect-ratio: 1;
-  justify-self: center;
+  grid-column: 1;
+  grid-row: 2;
+  justify-self: start;
+  margin-left: clamp(0rem, 4vw, 4rem);
   border: 1px solid rgba(255, 216, 236, 0.08);
   border-radius: 50%;
   background: radial-gradient(circle, rgba(88, 44, 111, 0.18), transparent 62%);
@@ -599,6 +640,7 @@ a {
   min-height: 118svh;
   flex-direction: column;
   justify-content: center;
+  align-items: flex-start;
   padding-bottom: calc(6rem + env(safe-area-inset-bottom));
 }
 
@@ -612,8 +654,8 @@ a {
 }
 
 .final-card {
-  width: min(100%, 790px);
-  padding: clamp(2rem, 6vw, 5rem);
+  width: min(42vw, 560px);
+  padding: clamp(2rem, 4vw, 3.4rem);
   border: 1px solid rgba(255, 227, 238, 0.17);
   border-radius: clamp(30px, 5vw, 56px);
   background:
@@ -623,7 +665,7 @@ a {
     0 45px 130px rgba(0, 0, 0, 0.4),
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(25px) saturate(1.16);
-  text-align: center;
+  text-align: left;
 }
 
 .final-card .chapter-number {
@@ -632,7 +674,7 @@ a {
 
 .heart-orbit {
   position: relative;
-  display: grid;
+  display: none;
   width: 86px;
   height: 86px;
   margin: 0 auto 2rem;
@@ -664,13 +706,13 @@ a {
 
 .final-card > p {
   max-width: 35rem;
-  margin-right: auto;
-  margin-left: auto;
+  margin-right: 0;
+  margin-left: 0;
 }
 
 .final-card blockquote {
   max-width: 37rem;
-  margin: 2rem auto 0;
+  margin: 2rem 0 0;
   color: var(--blush);
   font-family: Georgia, "Times New Roman", serif;
   font-size: clamp(1.18rem, 2.2vw, 1.65rem);
@@ -681,7 +723,7 @@ a {
 .final-actions {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 1.1rem;
   margin-top: 2.4rem;
 }
@@ -795,15 +837,15 @@ a {
   }
 
   .hero-section {
-    align-items: center;
-    padding-top: 7.5rem;
-    padding-bottom: 8.5rem;
+    align-items: flex-end;
+    padding-top: 32svh;
+    padding-bottom: 5.7rem;
   }
 
   .hero-section::before {
     background:
-      linear-gradient(0deg, rgba(8, 6, 17, 0.7), transparent 64%),
-      radial-gradient(circle at 50% 48%, transparent 10%, rgba(8, 6, 17, 0.24) 92%);
+      linear-gradient(0deg, rgba(3, 2, 10, 0.78), rgba(3, 2, 10, 0.12) 56%, transparent 75%),
+      radial-gradient(circle at 50% 38%, transparent 12%, rgba(3, 2, 10, 0.18) 94%);
   }
 
   .hero-copy {
@@ -811,17 +853,23 @@ a {
   }
 
   .hero-copy h1 {
-    max-width: 9.7ch;
+    max-width: 10.2ch;
     margin-right: auto;
     margin-left: auto;
-    font-size: clamp(3rem, 14.5vw, 5.7rem);
+    font-size: clamp(2.8rem, 12.5vw, 5.2rem);
     line-height: 0.94;
   }
 
   .hero-lede {
     max-width: 25rem;
+    margin-top: 1.1rem;
+    margin-bottom: 1.4rem;
     margin-right: auto;
     margin-left: auto;
+  }
+
+  .experience-label {
+    justify-content: center;
   }
 
   .scroll-cue {
@@ -850,12 +898,12 @@ a {
   }
 
   .memory-section {
-    min-height: 130svh;
+    min-height: 145svh;
     grid-template-columns: 1fr;
     grid-template-rows: auto auto;
-    align-content: center;
+    align-content: start;
     gap: 2.2rem;
-    padding-top: 7.5rem;
+    padding-top: 40svh;
     padding-bottom: 7.5rem;
   }
 
@@ -873,8 +921,15 @@ a {
     justify-content: center;
   }
 
+  .three-hint {
+    margin-right: auto;
+    margin-left: auto;
+  }
+
   .memory-orbit {
-    width: min(88vw, 470px);
+    width: min(72vw, 360px);
+    justify-self: center;
+    margin-left: 0;
   }
 
   .memory-star {
@@ -887,13 +942,31 @@ a {
   }
 
   .final-section {
-    min-height: 112svh;
-    padding-top: 7rem;
+    min-height: 132svh;
+    align-items: stretch;
+    justify-content: flex-start;
+    padding-top: 50svh;
     padding-bottom: 7rem;
   }
 
   .final-card {
+    width: 100%;
     border-radius: 30px;
+    text-align: center;
+  }
+
+  .final-card > p {
+    margin-right: auto;
+    margin-left: auto;
+  }
+
+  .final-card blockquote {
+    margin-right: auto;
+    margin-left: auto;
+  }
+
+  .final-actions {
+    justify-content: center;
   }
 }
 

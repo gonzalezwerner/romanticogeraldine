@@ -76,6 +76,7 @@ export default function RomanticStory() {
   }, []);
 
   const beginJourney = useCallback(() => {
+    window.dispatchEvent(new CustomEvent("romance:journey"));
     sendGalaxyBurst();
     document.getElementById("primera-luz")?.scrollIntoView({
       behavior: reducedMotion ? "auto" : "smooth",
@@ -84,6 +85,9 @@ export default function RomanticStory() {
 
   const chooseMemory = useCallback((index: number, x: number, y: number) => {
     setSelectedMemory(index);
+    window.dispatchEvent(
+      new CustomEvent("romance:memory", { detail: { index } }),
+    );
     sendGalaxyBurst(x, y);
   }, []);
 
@@ -119,7 +123,7 @@ export default function RomanticStory() {
       <header className="site-chrome" aria-label="Controles de la experiencia">
         <a className="brand-mark" href="#inicio" aria-label="Volver al inicio">
           <span aria-hidden="true">✦</span>
-          <span>Para ti</span>
+          <span>Universo 3D · Para ti</span>
         </a>
         <button
           className="motion-toggle"
@@ -137,6 +141,11 @@ export default function RomanticStory() {
           <p className="date-pill">
             <span aria-hidden="true">✦</span>
             1 de agosto · Día de la Novia
+          </p>
+          <p className="experience-label">
+            <i aria-hidden="true" />
+            <span>Experiencia 3D en tiempo real</span>
+            <small>Toca · mueve · desliza</small>
           </p>
           <h1>
             Hay personas que cambian la forma en que miramos el
@@ -178,6 +187,9 @@ export default function RomanticStory() {
             de poder ser nosotros mismos.
           </p>
           <p className="touch-instruction">Toca una estrella</p>
+          <p className="three-hint">
+            Cada una ilumina un cristal alrededor del corazón 3D.
+          </p>
         </div>
 
         <div className="memory-orbit reveal" aria-label="Pequeños recuerdos">
