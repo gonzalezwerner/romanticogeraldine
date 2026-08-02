@@ -23,6 +23,8 @@ function sendGalaxyBurst(x?: number, y?: number) {
 }
 
 export default function RomanticStory() {
+  const [hasEntered, setHasEntered] = useState(false);
+  const [introComplete, setIntroComplete] = useState(false);
   const [selectedMemory, setSelectedMemory] = useState(0);
   const [reducedMotion, setReducedMotion] = useState(false);
   const [shareStatus, setShareStatus] = useState("");
@@ -63,6 +65,26 @@ export default function RomanticStory() {
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    if (!introComplete) {
+      document.documentElement.classList.add("portal-locked");
+      return () => document.documentElement.classList.remove("portal-locked");
+    }
+    document.documentElement.classList.remove("portal-locked");
+  }, [introComplete]);
+
+  useEffect(() => {
+    if (!hasEntered) return;
+    const finishTimer = window.setTimeout(
+      () => {
+        setIntroComplete(true);
+        document.getElementById("inicio")?.focus({ preventScroll: true });
+      },
+      reducedMotion ? 480 : 3900,
+    );
+    return () => window.clearTimeout(finishTimer);
+  }, [hasEntered, reducedMotion]);
+
   const toggleMotion = useCallback(() => {
     setReducedMotion((current) => {
       const next = !current;
@@ -82,6 +104,12 @@ export default function RomanticStory() {
       behavior: reducedMotion ? "auto" : "smooth",
     });
   }, [reducedMotion]);
+
+  const enterUniverse = useCallback(() => {
+    setHasEntered(true);
+    window.dispatchEvent(new CustomEvent("romance:intro"));
+    if ("vibrate" in navigator) navigator.vibrate([18, 38, 24]);
+  }, []);
 
   const chooseMemory = useCallback((index: number, x: number, y: number) => {
     setSelectedMemory(index);
@@ -114,11 +142,44 @@ export default function RomanticStory() {
   }, []);
 
   return (
-    <main className="experience">
+    <main
+      className={`experience ${
+        introComplete ? "is-entered" : hasEntered ? "is-travelling" : "is-awaiting"
+      }`}
+    >
       <div className="galaxy-layer">
         <GalaxyCanvas />
       </div>
       <div className="cosmic-veil" aria-hidden="true" />
+
+      <div
+        className={`entry-gate ${hasEntered ? "is-opening" : ""}`}
+        role="dialog"
+        aria-modal={!hasEntered}
+        aria-hidden={hasEntered}
+        aria-label="Entrada a la experiencia 3D"
+      >
+        <div className="entry-aura" aria-hidden="true" />
+        <div className="entry-copy">
+          <p className="entry-kicker">Transmisión privada · 01.08</p>
+          <h2>Antes de entrar: esto no es una galaxia.</h2>
+          <p className="entry-lede">
+            Es todo lo que no siempre sé decirte.
+          </p>
+          <button className="portal-button" type="button" onClick={enterUniverse}>
+            <i className="portal-ring portal-ring-one" aria-hidden="true" />
+            <i className="portal-ring portal-ring-two" aria-hidden="true" />
+            <span>
+              Toca
+              <small>para abrirla</small>
+            </span>
+          </button>
+          <p className="entry-instruction">Toca · inclina · desliza</p>
+        </div>
+        <p className="entry-signature" aria-hidden="true">
+          Para ti, con amor.
+        </p>
+      </div>
 
       <header className="site-chrome" aria-label="Controles de la experiencia">
         <a className="brand-mark" href="#inicio" aria-label="Volver al inicio">
@@ -136,7 +197,7 @@ export default function RomanticStory() {
         </button>
       </header>
 
-      <section className="story-section hero-section" id="inicio">
+      <section className="story-section hero-section" id="inicio" tabIndex={-1}>
         <div className="hero-copy reveal is-visible">
           <p className="date-pill">
             <span aria-hidden="true">✦</span>
@@ -148,15 +209,15 @@ export default function RomanticStory() {
             <small>Toca · mueve · desliza</small>
           </p>
           <h1>
-            Hay personas que cambian la forma en que miramos el
-            <em> universo.</em>
+            En un universo inmenso, mi lugar favorito sigue siendo
+            <em> contigo.</em>
           </h1>
           <p className="hero-lede">
-            Esta pequeña galaxia existe para celebrar a una de ellas:
-            <strong> tú.</strong>
+            No hice esto para explicarte cuánto te quiero. Lo hice para que
+            pudieras entrar un momento en ello.
           </p>
           <button className="primary-button" type="button" onClick={beginJourney}>
-            Explorar nuestra galaxia
+            Sigue la primera luz
             <span aria-hidden="true">↘</span>
           </button>
         </div>
@@ -170,10 +231,10 @@ export default function RomanticStory() {
       <section className="story-section chapter chapter-left" id="primera-luz">
         <article className="story-card reveal">
           <p className="chapter-number">I · La primera luz</p>
-          <h2>Desde que llegaste, algo brilla distinto.</h2>
+          <h2>No llegaste haciendo ruido. Solo cambiaste la luz de todo.</h2>
           <p>
-            No porque todo sea perfecto, sino porque incluso los días normales
-            tienen algo especial cuando los compartimos.
+            Desde entonces, incluso los días normales tienen algo especial
+            cuando los compartimos.
           </p>
         </article>
       </section>
@@ -218,10 +279,10 @@ export default function RomanticStory() {
       <section className="story-section chapter chapter-right" id="constelacion">
         <article className="story-card reveal">
           <p className="chapter-number">III · Nuestra constelación</p>
-          <h2>No somos un destino escrito.</h2>
+          <h2>No quiero prometerte un cielo perfecto.</h2>
           <p>
-            Somos momentos, decisiones y caminos que se encuentran una y otra
-            vez. Y todavía queda mucho cielo por recorrer.
+            Quiero seguir encontrándote en él: en los momentos, las decisiones
+            y todos los caminos que aún nos faltan.
           </p>
         </article>
       </section>
@@ -232,7 +293,7 @@ export default function RomanticStory() {
           <div className="heart-orbit" aria-hidden="true">
             <span>♥</span>
           </div>
-          <h2>Hoy celebro que estés en mi vida.</h2>
+          <h2>La fecha es una excusa. Tú eres la razón.</h2>
           <p>
             Feliz Día de la Novia. Gracias por convertir tantos instantes
             sencillos en recuerdos que quiero conservar.

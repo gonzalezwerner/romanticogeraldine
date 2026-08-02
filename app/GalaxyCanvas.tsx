@@ -5,13 +5,14 @@ import * as THREE from "three";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 
 const starVertexShader = /* glsl */ `
   attribute float aSize;
   attribute float aPhase;
-  attribute vec3 color;
+  attribute vec3 aColor;
   varying vec3 vColor;
   varying float vGlow;
   uniform float uTime;
@@ -20,7 +21,7 @@ const starVertexShader = /* glsl */ `
 
   void main() {
     float twinkle = 0.76 + sin(uTime * 1.7 + aPhase) * 0.24;
-    vColor = color;
+    vColor = aColor;
     vGlow = twinkle;
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
     float perspective = 42.0 / max(3.2, -mvPosition.z);
@@ -65,6 +66,138 @@ const atmosphereFragmentShader = /* glsl */ `
     gl_FragColor = vec4(uColor, fresnel * 0.72);
   }
 `;
+
+const morphVertexShader = /* glsl */ `
+  attribute vec3 aTarget;
+  attribute float aSize;
+  attribute float aPhase;
+  attribute vec3 aColor;
+  varying vec3 vColor;
+  uniform float uTime;
+  uniform float uMorph;
+  uniform float uPixelRatio;
+
+  void main() {
+    float delay = fract(aPhase / 6.2831853) * 0.42;
+    float localMorph = smoothstep(delay, min(0.98, delay + 0.46), uMorph);
+    localMorph = localMorph * localMorph * (3.0 - 2.0 * localMorph);
+    float idleAngle =
+      uTime * (0.055 + aPhase * 0.003) * (1.0 - localMorph) +
+      sin(localMorph * 3.14159265) * (2.0 + delay * 4.0);
+    mat2 spin = mat2(cos(idleAngle), -sin(idleAngle), sin(idleAngle), cos(idleAngle));
+    vec3 drifting = position;
+    drifting.xy = spin * drifting.xy;
+    drifting.z += sin(uTime * 0.7 + aPhase) * 0.12 * (1.0 - localMorph);
+    vec3 transformed = mix(drifting, aTarget, localMorph);
+    float energyArc = sin(localMorph * 3.14159265);
+    transformed += vec3(
+      sin(aPhase + uTime * 2.0),
+      cos(aPhase * 1.7 + uTime),
+      sin(aPhase * 2.3 - uTime * 0.8)
+    ) * energyArc * 0.2;
+    transformed += normalize(aTarget + vec3(0.001)) *
+      sin(uTime * 2.0 + aPhase) * 0.025 * localMorph;
+
+    vColor = aColor;
+    vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
+    gl_PointSize = aSize * uPixelRatio * (40.0 / max(3.0, -mvPosition.z));
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+const morphFragmentShader = /* glsl */ `
+  varying vec3 vColor;
+
+  void main() {
+    float d = length(gl_PointCoord - vec2(0.5));
+    float halo = 1.0 - smoothstep(0.06, 0.5, d);
+    float core = 1.0 - smoothstep(0.0, 0.14, d);
+    if (halo < 0.008) discard;
+    gl_FragColor = vec4(vColor * (0.9 + core * 1.8), halo * (0.7 + core * 0.3));
+  }
+`;
+
+const portalTunnelVertexShader = /* glsl */ `
+  varying vec2 vUv;
+
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const portalTunnelFragmentShader = /* glsl */ `
+  uniform float uTime;
+  uniform float uOpen;
+  uniform float uTravel;
+  varying vec2 vUv;
+
+  float glowBand(float value, float power) {
+    return pow(0.5 + 0.5 * sin(value), power);
+  }
+
+  void main() {
+    float helixA = glowBand(vUv.y * 72.0 - uTime * 8.0 + vUv.x * 38.0, 7.0);
+    float helixB = glowBand(vUv.y * 31.0 + uTime * 4.6 - vUv.x * 78.0, 11.0);
+    float depthPulse = glowBand(vUv.y * 118.0 - uTime * 13.0, 18.0);
+    float edgeFade = pow(max(0.0, sin(vUv.y * 3.14159265)), 0.32);
+    float travelWave = 0.72 + 0.28 * sin(vUv.y * 10.0 - uTravel * 17.0);
+    vec3 rose = vec3(1.55, 0.16, 0.58);
+    vec3 violet = vec3(0.32, 0.12, 1.48);
+    vec3 champagne = vec3(1.45, 0.72, 0.34);
+    vec3 color = mix(violet, rose, smoothstep(0.08, 0.92, vUv.y));
+    color = mix(color, champagne, depthPulse * 0.36);
+    float energy = helixA * 0.72 + helixB * 1.18 + depthPulse * 0.58;
+    float alpha = (0.045 + energy * 0.38) * edgeFade * travelWave * uOpen;
+    if (alpha < 0.008) discard;
+    gl_FragColor = vec4(color * (0.34 + energy * 1.28), alpha);
+  }
+`;
+
+const cinematicShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uTime: { value: 0 },
+    uEnergy: { value: 0 },
+    uResolution: { value: new THREE.Vector2(1, 1) },
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform float uTime;
+    uniform float uEnergy;
+    uniform vec2 uResolution;
+    varying vec2 vUv;
+
+    float random(vec2 p) {
+      return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+    }
+
+    void main() {
+      vec2 centered = vUv - 0.5;
+      float edgeDistance = length(centered);
+      float aberration = (0.00055 + uEnergy * 0.0065) * (0.25 + edgeDistance);
+      vec2 offset = normalize(centered + vec2(0.0001)) * aberration;
+      float red = texture2D(tDiffuse, vUv + offset).r;
+      float green = texture2D(tDiffuse, vUv).g;
+      float blue = texture2D(tDiffuse, vUv - offset).b;
+      vec3 color = vec3(red, green, blue);
+      float vignette = 1.0 - smoothstep(0.3, 0.82, edgeDistance);
+      color *= mix(0.68, 1.0, vignette);
+      float grain = random(vUv * uResolution + vec2(uTime * 41.0, -uTime * 17.0)) - 0.5;
+      color += grain * 0.018;
+      float flare = exp(-abs(vUv.y - 0.5) * 90.0) * uEnergy * 0.08;
+      color += vec3(1.0, 0.38, 0.62) * flare;
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `,
+};
 
 function gaussian() {
   return (
@@ -185,7 +318,6 @@ function makeStarMaterial() {
     transparent: true,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
-    vertexColors: true,
   });
 }
 
@@ -197,7 +329,7 @@ function addStarAttributes(
   phases: Float32Array,
 ) {
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  geometry.setAttribute("aColor", new THREE.BufferAttribute(colors, 3));
   geometry.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
   geometry.setAttribute("aPhase", new THREE.BufferAttribute(phases, 1));
 }
@@ -225,16 +357,17 @@ export default function GalaxyCanvas() {
 
     let renderDisabled = false;
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x03020a);
-    scene.fog = new THREE.FogExp2(0x05030d, 0.012);
+    scene.background = new THREE.Color(0x020106);
+    scene.fog = new THREE.FogExp2(0x030108, 0.013);
 
     const camera = new THREE.PerspectiveCamera(50, 1, 0.08, 120);
     camera.position.set(0, 0.15, 12.8);
 
-    renderer.setClearColor(0x03020a, 1);
+    renderer.setClearColor(0x020106, 1);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.08;
+    renderer.toneMappingExposure = 0.76;
+    renderer.transmissionResolutionScale = 0.5;
     renderer.domElement.setAttribute("aria-hidden", "true");
     renderer.domElement.setAttribute("role", "presentation");
     mount.appendChild(renderer.domElement);
@@ -244,14 +377,19 @@ export default function GalaxyCanvas() {
     const lowPower =
       (navigator.hardwareConcurrency ?? 8) <= 4 ||
       (device.deviceMemory ?? 8) <= 4;
-    const useBloom =
-      renderer.extensions.has("EXT_color_buffer_float") && (!lowPower || !isMobile);
+    const useBloom = renderer.extensions.has("EXT_color_buffer_float") && !lowPower;
 
     let environmentTarget: THREE.WebGLRenderTarget | null = null;
     if (!lowPower) {
       const environment = new RoomEnvironment();
       const pmremGenerator = new THREE.PMREMGenerator(renderer);
-      environmentTarget = pmremGenerator.fromScene(environment, 0.04);
+      environmentTarget = pmremGenerator.fromScene(
+        environment,
+        0.04,
+        0.1,
+        100,
+        { size: isMobile ? 64 : 128 },
+      );
       scene.environment = environmentTarget.texture;
       environment.dispose();
       pmremGenerator.dispose();
@@ -260,6 +398,7 @@ export default function GalaxyCanvas() {
     let composer: EffectComposer | null = null;
     let bloomPass: UnrealBloomPass | null = null;
     let renderPass: RenderPass | null = null;
+    let cinematicPass: ShaderPass | null = null;
     let outputPass: OutputPass | null = null;
     if (useBloom) {
       composer = new EffectComposer(renderer);
@@ -267,11 +406,13 @@ export default function GalaxyCanvas() {
       composer.addPass(renderPass);
       bloomPass = new UnrealBloomPass(
         new THREE.Vector2(window.innerWidth, window.innerHeight),
-        isMobile ? 0.72 : 1.05,
-        isMobile ? 0.38 : 0.52,
-        isMobile ? 0.62 : 0.48,
+        isMobile ? 0.46 : 0.7,
+        isMobile ? 0.28 : 0.38,
+        isMobile ? 0.8 : 0.72,
       );
       composer.addPass(bloomPass);
+      cinematicPass = new ShaderPass(cinematicShader);
+      composer.addPass(cinematicPass);
       outputPass = new OutputPass();
       composer.addPass(outputPass);
     }
@@ -374,7 +515,7 @@ export default function GalaxyCanvas() {
     );
     scene.add(foregroundStars);
 
-    // Layered sprite volumes make the nebulae feel suspended in 3D space.
+    // Layered instanced billboards keep the nebula volume rich with only three draw calls.
     const glowDefinitions: Array<{
       rgb: [number, number, number];
       position: THREE.Vector3;
@@ -391,42 +532,154 @@ export default function GalaxyCanvas() {
       generatedTextures.add(texture);
       const group = new THREE.Group();
       group.position.copy(definition.position);
-      for (let layer = 0; layer < (isMobile ? 5 : 9); layer += 1) {
-        const material = new THREE.SpriteMaterial({
-          map: texture,
-          color: 0xffffff,
-          transparent: true,
-          opacity: 0.07 + Math.random() * 0.085,
-          depthWrite: false,
-          blending: THREE.AdditiveBlending,
-          rotation: Math.random() * Math.PI,
-        });
-        const sprite = new THREE.Sprite(material);
-        sprite.position.set(
+      const layerCount = isMobile ? 5 : 9;
+      const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        color: 0xffffff,
+        transparent: true,
+        opacity: isMobile ? 0.035 : 0.052,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+      });
+      const volume = new THREE.InstancedMesh(
+        new THREE.PlaneGeometry(1, 1),
+        material,
+        layerCount,
+      );
+      const layerDummy = new THREE.Object3D();
+      for (let layer = 0; layer < layerCount; layer += 1) {
+        const layerScale = definition.scale * (0.62 + Math.random() * 0.7);
+        layerDummy.position.set(
           gaussian() * 1.25,
           gaussian() * 0.85,
           gaussian() * 1.25,
         );
-        const layerScale = definition.scale * (0.62 + Math.random() * 0.7);
-        sprite.scale.set(layerScale, layerScale * (0.7 + Math.random() * 0.35), 1);
-        group.add(sprite);
+        layerDummy.rotation.set(0, 0, Math.random() * Math.PI);
+        layerDummy.scale.set(
+          layerScale,
+          layerScale * (0.7 + Math.random() * 0.35),
+          1,
+        );
+        layerDummy.updateMatrix();
+        volume.setMatrixAt(layer, layerDummy.matrix);
+        volume.setColorAt(
+          layer,
+          new THREE.Color().setScalar(0.62 + Math.random() * 0.48),
+        );
       }
+      if (volume.instanceColor) volume.instanceColor.needsUpdate = true;
+      volume.frustumCulled = false;
+      group.add(volume);
       group.rotation.z = definitionIndex * 0.7;
       scene.add(group);
       nebulaGroups.push(group);
     });
 
     // Lighting for the 3D hero objects.
-    scene.add(new THREE.AmbientLight(0x5b3d76, 1.05));
-    const roseLight = new THREE.PointLight(0xff4f9b, 58, 22, 1.8);
+    scene.add(new THREE.AmbientLight(0x4d315d, 0.58));
+    const roseLight = new THREE.PointLight(0xff4f9b, 28, 22, 1.8);
     roseLight.position.set(3.2, 2.2, 5.5);
-    const goldLight = new THREE.PointLight(0xffd69b, 46, 20, 1.8);
+    const goldLight = new THREE.PointLight(0xffd69b, 22, 20, 1.8);
     goldLight.position.set(-4, 3.4, 4.5);
-    const violetLight = new THREE.PointLight(0x7656ff, 52, 24, 1.9);
+    const violetLight = new THREE.PointLight(0x7656ff, 26, 24, 1.9);
     violetLight.position.set(0, -4.5, 3);
     const pulseLight = new THREE.PointLight(0xff9ac6, 0, 14, 1.6);
     pulseLight.position.set(0, 0, 3);
     scene.add(roseLight, goldLight, violetLight, pulseLight);
+
+    // A luminous 3D gateway occupies the opening shot and the camera flies through it.
+    const portalGroup = new THREE.Group();
+    const portalRingCount = isMobile ? (lowPower ? 3 : 5) : 7;
+    const portalRingGeometry = new THREE.TorusGeometry(
+      1,
+      0.015,
+      6,
+      isMobile ? 72 : 112,
+    );
+    const portalRingMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.24,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const portalRings = new THREE.InstancedMesh(
+      portalRingGeometry,
+      portalRingMaterial,
+      portalRingCount,
+    );
+    const portalRingBaseZ = new Float32Array(portalRingCount);
+    const portalRingRadius = new Float32Array(portalRingCount);
+    const portalRingRotation = new Float32Array(portalRingCount * 3);
+    const portalRingDummy = new THREE.Object3D();
+    for (let index = 0; index < portalRingCount; index += 1) {
+      portalRingBaseZ[index] = 6.4 - index * 1.05;
+      portalRingRadius[index] = 1.05 + index * 0.27;
+      portalRingRotation[index * 3] = index * 0.19;
+      portalRingRotation[index * 3 + 1] = index * 0.12;
+      portalRingRotation[index * 3 + 2] = index * 0.36;
+      portalRingDummy.position.set(0, 0, portalRingBaseZ[index]);
+      portalRingDummy.rotation.set(
+        portalRingRotation[index * 3],
+        portalRingRotation[index * 3 + 1],
+        portalRingRotation[index * 3 + 2],
+      );
+      portalRingDummy.scale.setScalar(portalRingRadius[index]);
+      portalRingDummy.updateMatrix();
+      portalRings.setMatrixAt(index, portalRingDummy.matrix);
+      portalRings.setColorAt(
+        index,
+        new THREE.Color(
+          index % 3 === 0 ? 0xff78b3 : index % 3 === 1 ? 0x9276ff : 0xffd7a0,
+        ),
+      );
+    }
+    portalRings.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    if (portalRings.instanceColor) portalRings.instanceColor.needsUpdate = true;
+    portalRings.frustumCulled = false;
+    portalGroup.add(portalRings);
+
+    const portalTunnelMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uOpen: { value: 0.28 },
+        uTravel: { value: 0 },
+      },
+      vertexShader: portalTunnelVertexShader,
+      fragmentShader: portalTunnelFragmentShader,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.BackSide,
+      blending: THREE.AdditiveBlending,
+    });
+    const portalTunnel = new THREE.Mesh(
+      new THREE.CylinderGeometry(
+        2.48,
+        0.52,
+        12,
+        isMobile ? 32 : 52,
+        isMobile ? 12 : 18,
+        true,
+      ),
+      portalTunnelMaterial,
+    );
+    portalTunnel.rotation.x = Math.PI / 2;
+    portalTunnel.position.z = 0.7;
+    portalGroup.add(portalTunnel);
+    const portalKnot = new THREE.Mesh(
+      new THREE.TorusKnotGeometry(1.1, 0.014, isMobile ? 88 : 140, 6, 2, 5),
+      new THREE.MeshBasicMaterial({
+        color: 0xffb4cf,
+        transparent: true,
+        opacity: 0.17,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    portalKnot.position.z = 2.2;
+    portalGroup.add(portalKnot);
+    scene.add(portalGroup);
 
     // A real extruded, beveled and reflective heart — the main 3D object.
     const heartShape = new THREE.Shape();
@@ -448,21 +701,24 @@ export default function GalaxyCanvas() {
     heartGeometry.center();
     heartGeometry.computeVertexNormals();
     const heartMaterial = new THREE.MeshPhysicalMaterial({
-      color: 0xff4f93,
-      emissive: 0x7d123e,
-      emissiveIntensity: 1.45,
-      metalness: 0.18,
-      roughness: 0.14,
+      color: 0xb8174f,
+      emissive: 0x2d0517,
+      emissiveIntensity: 0.38,
+      metalness: 0.24,
+      roughness: 0.28,
       clearcoat: 1,
-      clearcoatRoughness: 0.08,
-      iridescence: 0.62,
+      clearcoatRoughness: 0.16,
+      iridescence: 0.38,
       iridescenceIOR: 1.42,
-      transmission: isMobile ? 0 : 0.18,
+      transmission: isMobile ? 0 : 0.08,
       thickness: 1.4,
+      transparent: true,
+      opacity: 0.12,
+      depthWrite: false,
     });
     const heart = new THREE.Mesh(heartGeometry, heartMaterial);
     heart.rotation.set(-0.08, 0.2, 0);
-    heart.scale.setScalar(isMobile ? 1.15 : 1.3);
+    heart.scale.setScalar(isMobile ? 0.98 : 1.18);
 
     const heartWire = new THREE.Mesh(
       heartGeometry,
@@ -470,7 +726,7 @@ export default function GalaxyCanvas() {
         color: 0xffd8e8,
         wireframe: true,
         transparent: true,
-        opacity: 0.095,
+        opacity: 0.034,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       }),
@@ -482,21 +738,23 @@ export default function GalaxyCanvas() {
     heartGroup.add(heart, heartWire);
     worldRoot.add(heartGroup);
 
-    const heartGlowTexture = makeGlowTexture([255, 75, 145]);
+    let heartGlow: THREE.Sprite<THREE.SpriteMaterial> | null = null;
+    const heartGlowTexture = makeGlowTexture([226, 36, 101]);
     if (heartGlowTexture) {
       generatedTextures.add(heartGlowTexture);
-      const glow = new THREE.Sprite(
+      heartGlow = new THREE.Sprite(
         new THREE.SpriteMaterial({
           map: heartGlowTexture,
           transparent: true,
-          opacity: 0.38,
+          opacity: 0.065,
           depthWrite: false,
           blending: THREE.AdditiveBlending,
         }),
       );
-      glow.position.z = -0.45;
-      glow.scale.set(6.8, 6.8, 1);
-      heartGroup.add(glow);
+      heartGlow.position.z = -0.45;
+      const glowScale = isMobile ? 4.7 : 5.25;
+      heartGlow.scale.set(glowScale, glowScale, 1);
+      heartGroup.add(heartGlow);
     }
 
     const ribbonPoints: THREE.Vector3[] = [];
@@ -516,7 +774,7 @@ export default function GalaxyCanvas() {
       new THREE.MeshBasicMaterial({
         color: 0xffd6aa,
         transparent: true,
-        opacity: 0.68,
+        opacity: 0.38,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       }),
@@ -527,7 +785,7 @@ export default function GalaxyCanvas() {
     secondRibbon.material = new THREE.MeshBasicMaterial({
       color: 0xa58aff,
       transparent: true,
-      opacity: 0.42,
+      opacity: 0.24,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
@@ -558,6 +816,65 @@ export default function GalaxyCanvas() {
     }
     crystalGroup.rotation.set(0.28, 0.12, 0);
     heartGroup.add(crystalGroup);
+
+    // Thousands of GPU particles can collapse from a spiral cloud into a heart.
+    const morphCount = isMobile ? 1350 : 2900;
+    const morphPositions = new Float32Array(morphCount * 3);
+    const morphTargets = new Float32Array(morphCount * 3);
+    const morphColors = new Float32Array(morphCount * 3);
+    const morphSizes = new Float32Array(morphCount);
+    const morphPhases = new Float32Array(morphCount);
+    for (let index = 0; index < morphCount; index += 1) {
+      const radius = 0.24 + Math.pow(Math.random(), 0.58) * 5.45;
+      const arm = index % 5;
+      const angle =
+        (arm / 5) * Math.PI * 2 + radius * 1.22 + gaussian() * 0.14;
+      morphPositions[index * 3] = Math.cos(angle) * radius;
+      morphPositions[index * 3 + 1] =
+        Math.sin(angle) * radius * 0.68 + gaussian() * 0.08;
+      morphPositions[index * 3 + 2] = gaussian() * (0.11 + radius * 0.055);
+
+      const t = Math.random() * Math.PI * 2;
+      const fill = Math.sqrt(Math.random());
+      const hx = 16 * Math.pow(Math.sin(t), 3) * 0.108 * fill;
+      const hy =
+        (13 * Math.cos(t) -
+          5 * Math.cos(2 * t) -
+          2 * Math.cos(3 * t) -
+          Math.cos(4 * t)) *
+        0.108 *
+        fill;
+      morphTargets[index * 3] = hx + gaussian() * 0.035;
+      morphTargets[index * 3 + 1] = hy + gaussian() * 0.035;
+      morphTargets[index * 3 + 2] = gaussian() * 0.24;
+
+      const color = index % 8 === 0 ? gold : index % 3 === 0 ? violet : rose;
+      morphColors[index * 3] = color.r;
+      morphColors[index * 3 + 1] = color.g;
+      morphColors[index * 3 + 2] = color.b;
+      morphSizes[index] = 0.55 + Math.pow(Math.random(), 4.5) * 2.5;
+      morphPhases[index] = Math.random() * Math.PI * 2;
+    }
+    const morphGeometry = new THREE.BufferGeometry();
+    morphGeometry.setAttribute("position", new THREE.BufferAttribute(morphPositions, 3));
+    morphGeometry.setAttribute("aTarget", new THREE.BufferAttribute(morphTargets, 3));
+    morphGeometry.setAttribute("aColor", new THREE.BufferAttribute(morphColors, 3));
+    morphGeometry.setAttribute("aSize", new THREE.BufferAttribute(morphSizes, 1));
+    morphGeometry.setAttribute("aPhase", new THREE.BufferAttribute(morphPhases, 1));
+    const morphMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uMorph: { value: 0 },
+        uPixelRatio: { value: 1 },
+      },
+      vertexShader: morphVertexShader,
+      fragmentShader: morphFragmentShader,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const morphParticles = new THREE.Points(morphGeometry, morphMaterial);
+    heartGroup.add(morphParticles);
 
     // A gas giant with luminous rings and atmospheric Fresnel shading.
     const planetTexture = makePlanetTexture();
@@ -648,6 +965,53 @@ export default function GalaxyCanvas() {
     distantPlanet.position.set(-5.2, 2.5, -4.8);
     worldRoot.add(distantPlanet);
 
+    // One instanced draw call creates a field of curved, light-reactive rose petals.
+    const petalGeometry = new THREE.SphereGeometry(0.12, 8, 6);
+    const petalPosition = petalGeometry.getAttribute("position") as THREE.BufferAttribute;
+    const petalVector = new THREE.Vector3();
+    for (let index = 0; index < petalPosition.count; index += 1) {
+      petalVector.fromBufferAttribute(petalPosition, index);
+      const normalizedY = petalVector.y / 0.12;
+      petalVector.x *= 0.7 + (1 - Math.abs(normalizedY)) * 0.42;
+      petalVector.y *= 1.55;
+      petalVector.z *= 0.24;
+      petalVector.z += (1 - normalizedY * normalizedY) * 0.042;
+      petalPosition.setXYZ(index, petalVector.x, petalVector.y, petalVector.z);
+    }
+    petalGeometry.computeVertexNormals();
+    const petalMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0xd84f79,
+      emissive: 0x2e0715,
+      emissiveIntensity: 0.1,
+      roughness: 0.46,
+      metalness: 0.02,
+      sheen: 1,
+      sheenColor: new THREE.Color(0xf2a5bc),
+      side: THREE.DoubleSide,
+    });
+    const petalCount = isMobile ? 72 : 150;
+    const petals = new THREE.InstancedMesh(
+      petalGeometry,
+      petalMaterial,
+      petalCount,
+    );
+    petals.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    petals.frustumCulled = false;
+    const petalSeeds = new Float32Array(petalCount);
+    const petalRadii = new Float32Array(petalCount);
+    const petalHeights = new Float32Array(petalCount);
+    const petalDepths = new Float32Array(petalCount);
+    const petalSpeeds = new Float32Array(petalCount);
+    for (let index = 0; index < petalCount; index += 1) {
+      petalSeeds[index] = Math.random();
+      petalRadii[index] = 2.3 + Math.random() * 6.8;
+      petalHeights[index] = gaussian() * 2.6;
+      petalDepths[index] = -4 + Math.random() * 10;
+      petalSpeeds[index] = 0.06 + Math.random() * 0.18;
+    }
+    scene.add(petals);
+    const petalDummy = new THREE.Object3D();
+
     // Cinematic shooting stars use textured 3D sprites rather than flat CSS marks.
     const streakTexture = makeStreakTexture();
     if (streakTexture) generatedTextures.add(streakTexture);
@@ -696,6 +1060,10 @@ export default function GalaxyCanvas() {
     let scrollCurrent = 0;
     let journeyEnergy = 0;
     let pulseEnergy = 0;
+    let currentElapsed = 0;
+    let introStarted = false;
+    let introStartedAt = 0;
+    let introProgress = 0;
     let selectedMemory = 0;
     let crystalRotationTarget = 0;
 
@@ -740,18 +1108,24 @@ export default function GalaxyCanvas() {
       0.42,
     );
     const currentLookTarget = targetPath.getPointAt(0);
+    const portalLookTarget = new THREE.Vector3(0, 0, 2.1);
     const desiredCamera = new THREE.Vector3();
     const desiredTarget = new THREE.Vector3();
 
-    const spawnBurst = (clientX: number, clientY: number, strength = 1) => {
+    const spawnBurst = (
+      clientX: number,
+      clientY: number,
+      strength = 1,
+      worldOrigin?: THREE.Vector3,
+    ) => {
       if (reducedMotion) return;
       pointerNdc.set(
         (clientX / window.innerWidth) * 2 - 1,
         -(clientY / window.innerHeight) * 2 + 1,
       );
       raycaster.setFromCamera(pointerNdc, camera);
-      const origin = new THREE.Vector3();
-      if (!raycaster.ray.intersectPlane(projectionPlane, origin)) {
+      const origin = worldOrigin?.clone() ?? new THREE.Vector3();
+      if (!worldOrigin && !raycaster.ray.intersectPlane(projectionPlane, origin)) {
         origin.copy(heartGroup.position).setZ(1.2);
       }
 
@@ -809,10 +1183,15 @@ export default function GalaxyCanvas() {
       camera.updateProjectionMatrix();
       galaxyMaterial.uniforms.uPixelRatio.value = pixelRatio;
       foregroundMaterial.uniforms.uPixelRatio.value = pixelRatio;
+      morphMaterial.uniforms.uPixelRatio.value = pixelRatio;
       if (composer) {
         composer.setPixelRatio(pixelRatio);
         composer.setSize(width, height);
       }
+      cinematicPass?.uniforms.uResolution.value.set(
+        width * pixelRatio,
+        height * pixelRatio,
+      );
       bloomPass?.setSize(width, height);
     };
 
@@ -822,17 +1201,66 @@ export default function GalaxyCanvas() {
     };
 
     const onPointerMove = (event: PointerEvent) => {
-      if (event.pointerType !== "mouse") return;
+      if (event.pointerType !== "mouse") {
+        if (!tapStart) return;
+        pointerTarget.set(
+          (event.clientX / window.innerWidth - 0.5) * 0.6,
+          (event.clientY / window.innerHeight - 0.5) * 0.6,
+        );
+        return;
+      }
       pointerTarget.set(
         (event.clientX / window.innerWidth - 0.5) * 2,
         (event.clientY / window.innerHeight - 0.5) * 2,
       );
     };
 
+    const interactiveMeshes: THREE.Object3D[] = [
+      heart,
+      planet,
+      moon,
+      distantSphere,
+      ...crystals,
+    ];
+    let tapStart: { x: number; y: number; at: number } | null = null;
+
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.closest("button, a")) return;
-      spawnBurst(event.clientX, event.clientY, 0.8);
+      tapStart = { x: event.clientX, y: event.clientY, at: performance.now() };
+    };
+
+    const onPointerUp = (event: PointerEvent) => {
+      if (!tapStart) return;
+      const distance = Math.hypot(
+        event.clientX - tapStart.x,
+        event.clientY - tapStart.y,
+      );
+      const duration = performance.now() - tapStart.at;
+      tapStart = null;
+      if (distance > 12 || duration > 460) return;
+
+      pointerNdc.set(
+        (event.clientX / window.innerWidth) * 2 - 1,
+        -(event.clientY / window.innerHeight) * 2 + 1,
+      );
+      scene.updateMatrixWorld(true);
+      raycaster.setFromCamera(pointerNdc, camera);
+      const hit = raycaster.intersectObjects(interactiveMeshes, false)[0];
+      spawnBurst(
+        event.clientX,
+        event.clientY,
+        hit ? 1.2 : 0.72,
+        hit?.point,
+      );
+      if (hit?.object === heart) {
+        pulseEnergy = 2;
+        journeyEnergy = Math.max(journeyEnergy, 0.45);
+      }
+    };
+
+    const onPointerCancel = () => {
+      tapStart = null;
     };
 
     const onBurstEvent = (event: Event) => {
@@ -847,6 +1275,14 @@ export default function GalaxyCanvas() {
     const onJourneyEvent = () => {
       journeyEnergy = 1;
       pulseEnergy = 1.5;
+    };
+
+    const onIntroEvent = () => {
+      introStarted = true;
+      introStartedAt = currentElapsed;
+      introProgress = 0;
+      journeyEnergy = 1.65;
+      pulseEnergy = 1.8;
     };
 
     const onMemoryEvent = (event: Event) => {
@@ -885,7 +1321,10 @@ export default function GalaxyCanvas() {
     window.addEventListener("scroll", updateScroll, { passive: true });
     window.addEventListener("pointermove", onPointerMove, { passive: true });
     window.addEventListener("pointerdown", onPointerDown, { passive: true });
+    window.addEventListener("pointerup", onPointerUp, { passive: true });
+    window.addEventListener("pointercancel", onPointerCancel, { passive: true });
     window.addEventListener("romance:burst", onBurstEvent);
+    window.addEventListener("romance:intro", onIntroEvent);
     window.addEventListener("romance:journey", onJourneyEvent);
     window.addEventListener("romance:memory", onMemoryEvent);
     window.addEventListener("romance:motion", onMotionEvent);
@@ -899,27 +1338,59 @@ export default function GalaxyCanvas() {
     let animationFrame = 0;
     let lastShot = 0;
     let nextShotDelay = 2.8 + Math.random() * 3.5;
-    let lastReducedRender = 0;
+    let lastRenderedFrame = 0;
 
     const animate = (timestamp: number) => {
       animationFrame = window.requestAnimationFrame(animate);
       if (document.hidden || renderDisabled) return;
-      if (reducedMotion && timestamp - lastReducedRender < 90) return;
-      lastReducedRender = timestamp;
+      const minimumFrameInterval = reducedMotion ? 90 : lowPower ? 32 : 0;
+      if (timestamp - lastRenderedFrame < minimumFrameInterval) return;
+      lastRenderedFrame = timestamp;
 
       timer.update(timestamp);
       const delta = Math.min(timer.getDelta(), 0.05);
       const elapsed = timer.getElapsed();
+      const visualElapsed = reducedMotion ? 0 : elapsed;
+      currentElapsed = elapsed;
+      if (introStarted) {
+        introProgress = THREE.MathUtils.clamp(
+          (elapsed - introStartedAt) / (reducedMotion ? 0.45 : 4.2),
+          0,
+          1,
+        );
+      }
+      const introTravel = introStarted ? smoothstep(0.22, 0.78, introProgress) : 0;
+      const introSettle = introStarted ? smoothstep(0.78, 1, introProgress) : 0;
+      const introFlash = introStarted
+        ? Math.exp(-Math.pow((introProgress - 0.69) / 0.052, 2))
+        : 0;
+      const introMorph = introStarted
+        ? Math.sin(Math.min(1, introProgress / 0.82) * Math.PI) * 0.96
+        : 0.06;
       const motionEase = reducedMotion ? 1 : 0.042;
       scrollCurrent += (scrollTarget - scrollCurrent) * motionEase;
       pointerCurrent.lerp(pointerTarget, reducedMotion ? 1 : 0.045);
-      journeyEnergy *= reducedMotion ? 0 : 0.955;
-      pulseEnergy *= reducedMotion ? 0 : 0.92;
+      journeyEnergy *= reducedMotion ? 0 : Math.exp(-2.8 * delta);
+      pulseEnergy *= reducedMotion ? 0 : Math.exp(-5.2 * delta);
 
-      galaxyMaterial.uniforms.uTime.value = elapsed;
-      foregroundMaterial.uniforms.uTime.value = elapsed;
+      galaxyMaterial.uniforms.uTime.value = visualElapsed;
+      foregroundMaterial.uniforms.uTime.value = visualElapsed;
       galaxyMaterial.uniforms.uEnergy.value = journeyEnergy;
       foregroundMaterial.uniforms.uEnergy.value = journeyEnergy;
+      morphMaterial.uniforms.uTime.value = visualElapsed;
+      morphMaterial.uniforms.uMorph.value = Math.max(
+        introMorph,
+        smoothstep(0.76, 0.98, scrollCurrent),
+      );
+      if (cinematicPass) {
+        cinematicPass.uniforms.uTime.value = visualElapsed;
+        cinematicPass.uniforms.uEnergy.value = Math.max(
+          journeyEnergy,
+          pulseEnergy * 0.22,
+          introFlash * 1.6,
+          Math.sin(introTravel * Math.PI) * 0.78,
+        );
+      }
 
       if (!reducedMotion) {
         galaxyRoot.rotation.z = -0.12 + elapsed * 0.008 + scrollCurrent * 0.48;
@@ -940,15 +1411,69 @@ export default function GalaxyCanvas() {
         distantPlanet.rotation.z = Math.sin(elapsed * 0.12) * 0.08;
       }
 
+      const portalFade = introStarted
+        ? 1 - smoothstep(0.7, 1, introProgress)
+        : 1;
+      portalGroup.visible = portalFade > 0.01;
+      for (let index = 0; index < portalRingCount; index += 1) {
+        const ringTravel = introTravel * (5.8 + index * 0.22);
+        const ringScale = 1 + Math.sin(introTravel * Math.PI) * (0.08 + index * 0.015);
+        portalRingDummy.position.set(0, 0, portalRingBaseZ[index] + ringTravel);
+        portalRingDummy.rotation.set(
+          portalRingRotation[index * 3] +
+            (reducedMotion ? 0 : elapsed * 0.025 * (index % 2 === 0 ? 1 : -1)),
+          portalRingRotation[index * 3 + 1],
+          portalRingRotation[index * 3 + 2] +
+            (reducedMotion
+              ? 0
+              : elapsed * (0.18 + index * 0.055) * (1 + introTravel * 2.8)),
+        );
+        portalRingDummy.scale.setScalar(portalRingRadius[index] * ringScale);
+        portalRingDummy.updateMatrix();
+        portalRings.setMatrixAt(index, portalRingDummy.matrix);
+      }
+      portalRings.instanceMatrix.needsUpdate = true;
+      portalRingMaterial.opacity = 0.24 * portalFade * (1 + introFlash * 2.8);
+
+      portalTunnel.visible = portalFade > 0.01;
+      portalTunnelMaterial.uniforms.uTime.value = visualElapsed;
+      portalTunnelMaterial.uniforms.uTravel.value = introTravel;
+      portalTunnelMaterial.uniforms.uOpen.value =
+        (introStarted ? 0.32 + smoothstep(0.02, 0.32, introProgress) * 0.86 : 0.28) *
+        portalFade *
+        (1 + introFlash * 1.5);
+      const tunnelBreath = 1 + Math.sin(introTravel * Math.PI) * 0.14;
+      portalTunnel.scale.set(tunnelBreath, 1, tunnelBreath);
+      portalKnot.visible = portalFade > 0.01;
+      (portalKnot.material as THREE.MeshBasicMaterial).opacity =
+        0.17 * portalFade * (1 + introFlash * 2.2);
+      if (!reducedMotion) {
+        portalKnot.rotation.z += delta * (0.14 + introTravel * 1.8);
+        portalKnot.rotation.y -= delta * (0.08 + introTravel * 1.1);
+      }
+
       const introBlend = smoothstep(0.02, 0.3, scrollCurrent);
-      heartGroup.position.x = isMobile ? 0 : THREE.MathUtils.lerp(2.35, 0, introBlend);
-      heartGroup.position.y = isMobile
+      const heroHeartX = isMobile ? 0 : THREE.MathUtils.lerp(2.35, 0, introBlend);
+      const heroHeartY = isMobile
         ? THREE.MathUtils.lerp(1.72, 0.05, introBlend)
         : THREE.MathUtils.lerp(0.46, 0.05, introBlend);
+      const introLayoutBlend = introStarted ? smoothstep(0.58, 1, introProgress) : 0;
+      heartGroup.position.x = THREE.MathUtils.lerp(0, heroHeartX, introLayoutBlend);
+      heartGroup.position.y = THREE.MathUtils.lerp(0.1, heroHeartY, introLayoutBlend);
       heartGroup.position.z = THREE.MathUtils.lerp(0.1, 0.75, smoothstep(0.76, 1, scrollCurrent));
-      const finalScale = 1 + smoothstep(0.78, 1, scrollCurrent) * 0.18;
+      const finalScale = 1 + smoothstep(0.78, 1, scrollCurrent) * 0.12;
       const heartbeat = reducedMotion ? 1 : 1 + Math.sin(elapsed * 2.1) * 0.024;
       heartGroup.scale.setScalar(finalScale * heartbeat);
+      const heartReveal = introStarted
+        ? 0.12 + smoothstep(0.08, 0.38, introProgress) * 0.8
+        : 0.12;
+      heartMaterial.opacity = heartReveal;
+      (heartWire.material as THREE.MeshBasicMaterial).opacity = 0.034 * heartReveal;
+      if (heartGlow) {
+        heartGlow.material.opacity =
+          (0.045 + pulseEnergy * 0.012 + finalScale * 0.008) *
+          (1 + introFlash * 0.7);
+      }
 
       crystalGroup.rotation.z += (crystalRotationTarget - crystalGroup.rotation.z) * 0.055;
       crystalGroup.rotation.y = reducedMotion ? 0.12 : 0.12 + Math.sin(elapsed * 0.25) * 0.24;
@@ -962,21 +1487,114 @@ export default function GalaxyCanvas() {
         crystal.scale.setScalar(nextScale);
       });
 
-      planetGroup.rotation.z = Math.sin(elapsed * 0.13) * 0.025;
-      pulseLight.intensity = pulseEnergy * 72;
-      heartMaterial.emissiveIntensity = 1.45 + pulseEnergy * 1.4;
+      const finalPetalFocus = smoothstep(0.72, 1, scrollCurrent);
+      const introPetalInfluence = introStarted
+        ? 1 - smoothstep(0.78, 1, introProgress)
+        : 0;
+      for (let index = 0; index < petalCount; index += 1) {
+        const seed = petalSeeds[index];
+        const angle =
+          seed * Math.PI * 2 +
+          visualElapsed * petalSpeeds[index] +
+          scrollCurrent * (2.5 + seed * 4.2);
+        const idleRadius = THREE.MathUtils.lerp(
+          petalRadii[index],
+          1.8 + seed * 2.2,
+          finalPetalFocus,
+        );
+        const idleX = heartGroup.position.x + Math.cos(angle) * idleRadius;
+        const idleY =
+          heartGroup.position.y +
+          petalHeights[index] +
+          Math.sin(angle * 1.7 + visualElapsed * 0.16) * 0.8;
+        const idleZ =
+          petalDepths[index] +
+          Math.sin(angle * 0.8 + seed * 8) * (0.5 + finalPetalFocus * 0.4);
+
+        const t = introTravel;
+        const inverse = 1 - t;
+        const controlX = Math.sin(seed * 19) * 3.8;
+        const controlY = Math.cos(seed * 13) * 3.2;
+        const controlZ = 3.2 + seed * 2.4;
+        const portalX = 0;
+        const portalY = 0;
+        const portalZ = 7.2;
+        const curveX =
+          inverse * inverse * idleX +
+          2 * inverse * t * controlX +
+          t * t * portalX;
+        const curveY =
+          inverse * inverse * idleY +
+          2 * inverse * t * controlY +
+          t * t * portalY;
+        const curveZ =
+          inverse * inverse * idleZ +
+          2 * inverse * t * controlZ +
+          t * t * portalZ;
+
+        petalDummy.position.set(
+          THREE.MathUtils.lerp(idleX, curveX, introPetalInfluence),
+          THREE.MathUtils.lerp(idleY, curveY, introPetalInfluence),
+          THREE.MathUtils.lerp(idleZ, curveZ, introPetalInfluence),
+        );
+        petalDummy.rotation.set(
+          visualElapsed * (0.35 + seed * 1.2) + seed * 8,
+          visualElapsed * (0.5 + seed) - angle,
+          angle * 0.7,
+        );
+        const baseScale = (0.48 + seed * 0.9) * (1 + finalPetalFocus * 0.28);
+        const introScale = introStarted
+          ? THREE.MathUtils.lerp(1, 1.8, Math.sin(introTravel * Math.PI))
+          : 1;
+        petalDummy.scale.setScalar(baseScale * introScale);
+        petalDummy.updateMatrix();
+        petals.setMatrixAt(index, petalDummy.matrix);
+      }
+      petals.instanceMatrix.needsUpdate = true;
+      petalMaterial.emissiveIntensity =
+        0.1 + introFlash * 0.72 + finalPetalFocus * 0.14;
+
+      planetGroup.rotation.z = Math.sin(visualElapsed * 0.13) * 0.025;
+      pulseLight.intensity = pulseEnergy * 32;
+      heartMaterial.emissiveIntensity =
+        0.38 + pulseEnergy * 0.46 + introFlash * 0.58;
+      const readingDim = Math.sin(scrollCurrent * Math.PI);
+      renderer.toneMappingExposure =
+        0.76 - readingDim * 0.12 + introFlash * 0.16;
       if (bloomPass) {
-        bloomPass.strength = (isMobile ? 0.72 : 1.12) + pulseEnergy * 0.22 + journeyEnergy * 0.28;
+        bloomPass.strength = Math.max(
+          0.26,
+          (isMobile ? 0.46 : 0.7) -
+            readingDim * 0.12 +
+            pulseEnergy * 0.1 +
+            journeyEnergy * 0.16 +
+            introFlash * 0.62 +
+            Math.sin(introTravel * Math.PI) * 0.16,
+        );
       }
 
       cameraPath.getPointAt(scrollCurrent, desiredCamera);
       targetPath.getPointAt(scrollCurrent, desiredTarget);
+      if (!introStarted) {
+        desiredTarget.copy(portalLookTarget);
+      } else if (introProgress < 1) {
+        desiredTarget.lerpVectors(
+          portalLookTarget,
+          desiredTarget,
+          smoothstep(0.7, 1, introProgress),
+        );
+      }
       desiredCamera.x += pointerCurrent.x * (isMobile ? 0.18 : 0.52);
       desiredCamera.y -= pointerCurrent.y * (isMobile ? 0.12 : 0.34);
-      desiredCamera.z -= journeyEnergy * 1.45;
+      const introFlight = introTravel * (1 - introSettle);
+      desiredCamera.x += Math.sin(introTravel * Math.PI) * (isMobile ? -0.35 : -0.72);
+      desiredCamera.y += Math.sin(introTravel * Math.PI * 2) * 0.2;
+      desiredCamera.z -= journeyEnergy * 1.45 + introFlight * (isMobile ? 12.4 : 13.2);
       camera.position.lerp(desiredCamera, reducedMotion ? 1 : 0.055);
       currentLookTarget.lerp(desiredTarget, reducedMotion ? 1 : 0.06);
-      camera.fov += (50 + journeyEnergy * 10 - camera.fov) * 0.08;
+      const introFov = Math.sin(introTravel * Math.PI) * (isMobile ? 17 : 24);
+      camera.fov +=
+        (50 + journeyEnergy * 10 + introFov + introFlash * 6 - camera.fov) * 0.08;
       camera.updateProjectionMatrix();
       camera.lookAt(currentLookTarget);
 
@@ -1043,7 +1661,10 @@ export default function GalaxyCanvas() {
       window.removeEventListener("scroll", updateScroll);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
       window.removeEventListener("romance:burst", onBurstEvent);
+      window.removeEventListener("romance:intro", onIntroEvent);
       window.removeEventListener("romance:journey", onJourneyEvent);
       window.removeEventListener("romance:memory", onMemoryEvent);
       window.removeEventListener("romance:motion", onMotionEvent);
@@ -1065,6 +1686,7 @@ export default function GalaxyCanvas() {
       environmentTarget?.dispose();
       bloomPass?.dispose();
       renderPass?.dispose();
+      cinematicPass?.dispose();
       outputPass?.dispose();
       composer?.dispose();
       timer.dispose();

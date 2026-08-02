@@ -33,7 +33,7 @@ test("server-renders the romantic galaxy experience", async () => {
   const html = await response.text();
   assert.match(html, /<title>Una galaxia para ti/);
   assert.match(html, /1 de agosto/);
-  assert.match(html, /Explorar nuestra galaxia/);
+  assert.match(html, /Sigue la primera luz/);
   assert.match(html, /Compartir esta galaxia/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
@@ -52,6 +52,8 @@ test("ships the final Three.js experience without starter preview files", async 
   assert.match(story, /navigator\.share/);
   assert.match(story, /romance:motion/);
   assert.match(galaxy, /from "three"/);
+  assert.match(galaxy, /InstancedMesh/);
+  assert.match(galaxy, /portalTunnelFragmentShader/);
   assert.match(galaxy, /prefers-reduced-motion/);
   assert.match(packageJson, /"three"/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
